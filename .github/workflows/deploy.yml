@@ -1,0 +1,52 @@
+name: DevSecOps CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]  # Triggers the pipeline every time you push to the main branch
+
+jobs:
+  security-scan:
+    name: Run Security Audits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Security Tools
+        run: pip install bandit
+
+      - name: Run Bandit Static Application Security Testing (SAST)
+        run: bandit -r . -x ./venv,./tests --severity-level high
+
+  deploy:
+    name: Deploy to AWS EC2
+    needs: security-scan  # Only deploys if the security scans pass cleanly!
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Execute Remote SSH Commands to Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            cd /var/www/task-manager
+            
+            # Pull the latest changes from GitHub repository
+            git pull origin main
+            
+            # Rebuild the Docker image with fresh changes
+            sudo docker build -t task-manager-app .
+            
+            # Stop and replace the old container seamlessly
+            sudo docker rm -f app-container || true
+            sudo docker run -d --name app-container -p 127.0.0.1:8000:8000 --restart unless-stopped --env-file .env task-manager-app
